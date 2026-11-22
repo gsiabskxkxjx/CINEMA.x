@@ -319,13 +319,13 @@ class LocalUserRepository implements UserRepository {
 
 /// مصادقة تجريبية: مستخدم محلي ثابت.
 class DemoAuthService implements AuthService {
-  static const AuthUser _user = AuthUser(id: 'demo');
+  static const SessionUser _user = SessionUser(id: 'demo');
 
   @override
-  AuthUser? get current => _user;
+  SessionUser? get current => _user;
 
   @override
-  Stream<AuthUser?> get changes => Stream<AuthUser?>.value(_user);
+  Stream<SessionUser?> get changes => Stream<SessionUser?>.value(_user);
 
   @override
   Stream<void> get passwordRecovery => const Stream<void>.empty();

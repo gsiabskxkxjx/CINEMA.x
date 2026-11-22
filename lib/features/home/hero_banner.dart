@@ -9,7 +9,6 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/errors.dart';
 import '../../core/utils/ui.dart';
 import '../../core/widgets/app_image.dart';
-import '../../core/widgets/common_widgets.dart';
 import '../../data/models/models.dart';
 import '../../providers/providers.dart';
 import '../player/play_helpers.dart';

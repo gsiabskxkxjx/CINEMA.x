@@ -119,10 +119,15 @@ class _AdminTitlesPageState extends ConsumerState<AdminTitlesPage> {
               label: context.tr('search_hint'),
               icon: Icons.search_rounded,
               textInputAction: TextInputAction.search,
-              onSubmitted: (v) => setState(() => _text = v.trim()),
+              onChanged: _onChanged,
+              onSubmitted: (v) {
+                _debounce?.cancel();
+                setState(() => _text = v.trim());
+              },
               suffix: IconButton(
                 icon: const Icon(Icons.clear_rounded, size: 18),
                 onPressed: () {
+                  _debounce?.cancel();
                   _search.clear();
                   setState(() => _text = '');
                 },
@@ -172,7 +177,7 @@ class _AdminTitlesPageState extends ConsumerState<AdminTitlesPage> {
                               color: published ? AppColors.success : AppColors.textDim,
                             ),
                             if (r['is_featured'] == true) MiniBadge(context.tr('status_featured'), color: AppColors.gold),
-                            if (r['is_premium'] == true) MiniBadge('PREMIUM', color: AppColors.gold),
+                            if (r['is_premium'] == true) const MiniBadge('PREMIUM', color: AppColors.gold),
                           ],
                         ),
                         trailing: PopupMenuButton<String>(

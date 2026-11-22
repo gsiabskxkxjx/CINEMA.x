@@ -53,7 +53,7 @@ Episode? nextEpisodeOf(List<Episode> episodes, Episode? current) {
   return episodes[i + 1];
 }
 
-/// مفتاح الترجمة الافتراضية: off | ext:<id>.
+/// مفتاح الترجمة الافتراضية: `off` أو `ext:<id>`.
 String defaultSubtitleKey(List<SubtitleItem> subtitles, String preferredLanguage) {
   if (preferredLanguage == 'off') return 'off';
   for (final s in subtitles) {

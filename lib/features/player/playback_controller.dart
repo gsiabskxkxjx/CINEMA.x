@@ -70,7 +70,7 @@ class PlaybackController extends ChangeNotifier {
   bool _userPaused = false;
   double _rate = 1.0;
   double _volume = 100.0;
-  Tracks _tracks = Tracks();
+  Tracks _tracks = const Tracks();
 
   List<VideoSource> _sources = const [];
   VideoSource? _src;

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
-import '../../data/models/models.dart';
 import 'playback_controller.dart';
 import 'playback_logic.dart';
 

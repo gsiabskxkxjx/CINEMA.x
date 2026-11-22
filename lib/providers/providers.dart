@@ -34,7 +34,7 @@ final authServiceProvider = Provider<AuthService>((ref) {
   return AppConfig.hasBackend ? SupabaseAuthService(Supabase.instance.client) : DemoAuthService();
 });
 
-final authUserProvider = StreamProvider<AuthUser?>((ref) => ref.watch(authServiceProvider).changes);
+final authUserProvider = StreamProvider<SessionUser?>((ref) => ref.watch(authServiceProvider).changes);
 
 /// يصبح true عند فتح رابط استعادة كلمة المرور.
 final recoveryActiveProvider = StateProvider<bool>((ref) => false);

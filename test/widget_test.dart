@@ -164,9 +164,9 @@ void main() {
       expect(entry().key, 'm1');
     });
 
-    test('AuthUser مساواة', () {
-      expect(const AuthUser(id: 'a', email: 'x@y.z'), const AuthUser(id: 'a', email: 'x@y.z'));
-      expect(const AuthUser(id: 'a') == const AuthUser(id: 'b'), isFalse);
+    test('SessionUser مساواة', () {
+      expect(const SessionUser(id: 'a', email: 'x@y.z'), const SessionUser(id: 'a', email: 'x@y.z'));
+      expect(const SessionUser(id: 'a') == const SessionUser(id: 'b'), isFalse);
     });
   });
 

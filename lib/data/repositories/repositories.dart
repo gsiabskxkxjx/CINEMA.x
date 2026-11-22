@@ -61,8 +61,8 @@ abstract class UserRepository {
 
 /// المصادقة.
 abstract class AuthService {
-  AuthUser? get current;
-  Stream<AuthUser?> get changes;
+  SessionUser? get current;
+  Stream<SessionUser?> get changes;
   Stream<void> get passwordRecovery;
 
   /// true = تم تسجيل الدخول فوراً، false = يلزم تأكيد البريد.

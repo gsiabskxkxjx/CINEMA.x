@@ -187,15 +187,15 @@ class SupabaseAuthService implements AuthService {
 
   GoTrueClient get _auth => _client.auth;
 
-  AuthUser? _map(User? u) => u == null ? null : AuthUser(id: u.id, email: u.email);
+  SessionUser? _map(User? u) => u == null ? null : SessionUser(id: u.id, email: u.email);
 
   @override
-  AuthUser? get current => _map(_auth.currentUser);
+  SessionUser? get current => _map(_auth.currentUser);
 
   @override
-  Stream<AuthUser?> get changes async* {
+  Stream<SessionUser?> get changes async* {
     // distinct: تجديد الرمز (tokenRefreshed) لا يجب أن يعيد بناء كل المزوّدات.
-    AuthUser? last = current;
+    SessionUser? last = current;
     yield last;
     await for (final state in _auth.onAuthStateChange) {
       final next = _map(state.session?.user);
