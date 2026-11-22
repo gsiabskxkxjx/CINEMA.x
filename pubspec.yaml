@@ -1,0 +1,53 @@
+name: cinema_x
+description: CINEMA X - تطبيق لمشاهدة الأفلام والمسلسلات العربية والأجنبية (Flutter + Supabase).
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.27.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # إدارة الحالة
+  flutter_riverpod: ^2.6.1
+
+  # الخلفية (Backend)
+  supabase_flutter: ^2.12.0
+
+  # مشغل الفيديو (libmpv) - يدعم MP4 / HLS (M3U8) / DASH و SRT / VTT على Android
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
+
+  # الواجهة والأداء
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+  google_fonts: ^6.2.1
+
+  # أدوات
+  shared_preferences: ^2.3.2
+  image_picker: ^1.1.2
+  connectivity_plus: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "#0B0B0F"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"

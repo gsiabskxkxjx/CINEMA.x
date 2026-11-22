@@ -1,0 +1,53 @@
+name: Android build
+
+# يبني APK (مقسّم حسب المعمارية) و AAB. شغّله يدوياً من تبويب Actions.
+# أضف Secrets في المستودع: SUPABASE_URL و SUPABASE_ANON_KEY
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Bootstrap (flutter create + patch + pub get)
+        run: bash scripts/bootstrap.sh
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test
+
+      - name: Write dart-defines
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          printf '{"SUPABASE_URL":"%s","SUPABASE_ANON_KEY":"%s"}' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" > env/dart_defines.json
+
+      - name: Build APK (split per ABI)
+        run: flutter build apk --release --split-per-abi --dart-define-from-file=env/dart_defines.json
+
+      - name: Build AAB
+        run: flutter build appbundle --release --dart-define-from-file=env/dart_defines.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cinema-x-android
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/bundle/release/*.aab
