@@ -13,7 +13,7 @@ create extension if not exists pg_trgm with schema extensions;
 -- دوال مساعدة
 -- ---------------------------------------------------------------------
 create or replace function public.set_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   new.updated_at = now();
   return new;
@@ -21,10 +21,10 @@ end $$;
 
 -- توحيد النص العربي للبحث: إزالة التشكيل والتطويل وتوحيد الألف والياء والتاء المربوطة
 create or replace function public.ar_norm(t text)
-returns text language sql immutable parallel safe as $$
+returns text language sql immutable parallel safe set search_path = '' as $$
   select lower(
     translate(
-      regexp_replace(coalesce(t, ''), '[ً-ٰٟـ]', '', 'g'),
+      regexp_replace(coalesce(t, ''), U&'[\064B-\065F\0670\0640]', '', 'g'),
       U&'\0623\0625\0622\0671\0649\0629\0624\0626',
       U&'\0627\0627\0627\0627\064A\0647\0648\064A'
     )
@@ -429,7 +429,7 @@ create trigger app_settings_updated_at before update on public.app_settings
 
 -- ملء series_id للحلقة من الموسم تلقائياً
 create or replace function public.episodes_fill_series()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   select s.series_id into new.series_id from public.seasons s where s.id = new.season_id;
   return new;

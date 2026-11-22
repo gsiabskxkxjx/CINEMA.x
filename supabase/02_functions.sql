@@ -395,3 +395,14 @@ grant execute on function public.admin_stats() to authenticated;
 grant execute on function public.register_device(text, text, text) to authenticated;
 grant execute on function public.current_plan() to authenticated;
 grant execute on function public.has_active_premium() to authenticated;
+
+-- ---------------------------------------------------------------------
+-- تقوية الأمان: دوال داخلية لا يجب أن تُستدعى مباشرةً عبر واجهة REST.
+--  - is_admin(): تُستخدم داخل سياسات RLS للمستخدمين المسجّلين فقط.
+--  - handle_new_user / protect_profile_fields: دوال مشغّلات (Triggers) فقط؛
+--    صلاحية التنفيذ لا تُفحص وقت تشغيل المشغّل فلا يتأثر عملها.
+-- ---------------------------------------------------------------------
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.protect_profile_fields() from public, anon, authenticated;

@@ -17,7 +17,7 @@ create extension if not exists pg_trgm with schema extensions;
 -- دوال مساعدة
 -- ---------------------------------------------------------------------
 create or replace function public.set_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   new.updated_at = now();
   return new;
@@ -25,10 +25,10 @@ end $$;
 
 -- توحيد النص العربي للبحث: إزالة التشكيل والتطويل وتوحيد الألف والياء والتاء المربوطة
 create or replace function public.ar_norm(t text)
-returns text language sql immutable parallel safe as $$
+returns text language sql immutable parallel safe set search_path = '' as $$
   select lower(
     translate(
-      regexp_replace(coalesce(t, ''), '[ً-ٰٟـ]', '', 'g'),
+      regexp_replace(coalesce(t, ''), U&'[\064B-\065F\0670\0640]', '', 'g'),
       U&'\0623\0625\0622\0671\0649\0629\0624\0626',
       U&'\0627\0627\0627\0627\064A\0647\0648\064A'
     )
@@ -433,7 +433,7 @@ create trigger app_settings_updated_at before update on public.app_settings
 
 -- ملء series_id للحلقة من الموسم تلقائياً
 create or replace function public.episodes_fill_series()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   select s.series_id into new.series_id from public.seasons s where s.id = new.season_id;
   return new;
@@ -892,6 +892,17 @@ grant execute on function public.register_device(text, text, text) to authentica
 grant execute on function public.current_plan() to authenticated;
 grant execute on function public.has_active_premium() to authenticated;
 
+-- ---------------------------------------------------------------------
+-- تقوية الأمان: دوال داخلية لا يجب أن تُستدعى مباشرةً عبر واجهة REST.
+--  - is_admin(): تُستخدم داخل سياسات RLS للمستخدمين المسجّلين فقط.
+--  - handle_new_user / protect_profile_fields: دوال مشغّلات (Triggers) فقط؛
+--    صلاحية التنفيذ لا تُفحص وقت تشغيل المشغّل فلا يتأثر عملها.
+-- ---------------------------------------------------------------------
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.protect_profile_fields() from public, anon, authenticated;
+
 -- >>>>>>>>>> 03_rls.sql
 -- =====================================================================
 -- CINEMA X — 03_rls.sql
@@ -1137,4 +1148,3 @@ on conflict (key) do nothing;
 --   update public.profiles set role = 'admin' where email = 'you@example.com';
 --
 -- =====================================================================
-

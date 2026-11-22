@@ -37,7 +37,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          printf '{"SUPABASE_URL":"%s","SUPABASE_ANON_KEY":"%s"}' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" > env/dart_defines.json
+          # أسرار المستودع إن وُجدت، وإلا القيم العامة المضمّنة (الرابط + المفتاح العام فقط)
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+            printf '{"SUPABASE_URL":"%s","SUPABASE_ANON_KEY":"%s"}' "$SUPABASE_URL" "$SUPABASE_ANON_KEY" > env/dart_defines.json
+          else
+            cp env/dart_defines.public.json env/dart_defines.json
+          fi
 
       - name: Build APK (split per ABI)
         run: flutter build apk --release --split-per-abi --dart-define-from-file=env/dart_defines.json
