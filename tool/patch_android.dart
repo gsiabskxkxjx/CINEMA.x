@@ -6,6 +6,7 @@
 //  2) ضبط اسم التطبيق الظاهر CINEMA X.
 //  3) إضافة intent-filter لروابط الرجوع من Supabase (استعادة كلمة المرور).
 //  4) إنشاء ملف proguard-rules.pro الخاص بمشغل media_kit.
+//  5) تعطيل مهام lintVital (تنهار أداة lint عند فحص بعض الإضافات فيفشل بناء release).
 // السكربت آمن للتشغيل أكثر من مرة (idempotent).
 import 'dart:io';
 
@@ -73,6 +74,41 @@ void main() {
 -dontwarn com.alexmercerind.**
 ''');
     changes.add('proguard-rules.pro');
+  }
+
+  // تعطيل فحص lint الإلزامي عند بناء release:
+  // أداة lint في Android Gradle Plugin تنهار (NoSuchMethodError في JavaDocParser)
+  // أثناء فحص كود الإضافات مثل image_picker_android، فيفشل البناء رغم سلامة الكود.
+  // هذا يعطّل مهام lintVital فقط ولا يؤثر على الترجمة أو الكود الناتج.
+  const lintMarker = 'CINEMA X: disable lintVital';
+  final rootKts = File('android/build.gradle.kts');
+  final rootGroovy = File('android/build.gradle');
+  if (rootKts.existsSync()) {
+    final src = rootKts.readAsStringSync();
+    if (!src.contains(lintMarker)) {
+      rootKts.writeAsStringSync('''$src
+
+// $lintMarker (lint crash in plugin modules)
+subprojects {
+    tasks.matching { it.name.startsWith("lintVital") }.configureEach { enabled = false }
+}
+''');
+      changes.add('build.gradle.kts: lintVital disabled');
+    }
+  } else if (rootGroovy.existsSync()) {
+    final src = rootGroovy.readAsStringSync();
+    if (!src.contains(lintMarker)) {
+      rootGroovy.writeAsStringSync('''$src
+
+// $lintMarker (lint crash in plugin modules)
+subprojects {
+    tasks.matching { it.name.startsWith('lintVital') }.configureEach { enabled = false }
+}
+''');
+      changes.add('build.gradle: lintVital disabled');
+    }
+  } else {
+    stderr.writeln('تحذير: لم أجد android/build.gradle(.kts) لتعطيل lintVital.');
   }
 
   if (changes.isEmpty) {

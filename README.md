@@ -115,6 +115,8 @@ flutter build appbundle --release --dart-define-from-file=env/dart_defines.json
 ```
 الناتج: `build/app/outputs/flutter-apk/` و`build/app/outputs/bundle/release/`.
 
+> سكربت `tool/patch_android.dart` يعطّل مهام `lintVital` في Gradle لأن أداة lint تنهار عند فحص كود إضافة image_picker (خطأ داخلي في الأداة وليس في كود التطبيق). لا يؤثر ذلك على الكود الناتج.
+
 ### توقيع الإصدار (إلزامي لـ Google Play)
 بدون إعداد التوقيع يُوقَّع البناء بمفتاح التطوير ولن يقبله Google Play. اتبع `android_templates/README.txt` (إنشاء مفتاح `.jks`، ملف `key.properties`، ومقطع `build.gradle` المناسب لإصدار Flutter عندك). **احتفظ بنسخة احتياطية من المفتاح وكلمات مروره؛ فقدانه يمنعك من تحديث التطبيق.**
 
