@@ -14,6 +14,7 @@ import 'admin_repository.dart';
 import 'admin_settings_page.dart';
 import 'admin_taxonomy_page.dart';
 import 'admin_titles_page.dart';
+import 'admin_tmdb_import_page.dart';
 import 'admin_users_page.dart';
 
 final adminStatsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
@@ -86,6 +87,12 @@ class AdminHomePage extends ConsumerWidget {
               title: context.tr('admin_featured'),
               subtitle: context.tr('admin_featured_hint'),
               onTap: () => push(const AdminFeaturedPage()),
+            ),
+            _MenuTile(
+              icon: Icons.cloud_download_outlined,
+              title: context.tr('admin_tmdb'),
+              subtitle: context.tr('admin_tmdb_hint'),
+              onTap: () => push(const AdminTmdbImportPage()),
             ),
             _MenuTile(
               icon: Icons.category_outlined,

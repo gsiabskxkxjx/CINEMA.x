@@ -36,6 +36,13 @@ class AboutPage extends ConsumerWidget {
           _InfoCard(icon: Icons.gavel_rounded, title: context.tr('about_rights'), body: context.tr('about_rights_body')),
           const SizedBox(height: 12),
           _InfoCard(
+            icon: Icons.local_movies_outlined,
+            title: context.tr('about_tmdb'),
+            body: context.tr('about_tmdb_body'),
+            ltr: true,
+          ),
+          const SizedBox(height: 12),
+          _InfoCard(
             icon: Icons.cloud_outlined,
             title: context.tr('about_mode'),
             body: context.tr(AppConfig.hasBackend ? 'about_mode_live' : 'about_mode_demo'),

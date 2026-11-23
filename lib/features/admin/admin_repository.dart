@@ -382,6 +382,16 @@ class AdminRepository {
     await _db.from('app_settings').upsert({'key': key, 'value': value}, onConflict: 'key');
   }
 
+  // ------------------------------------------------------------------ استيراد TMDB
+  /// يشغّل دالة الخادم tmdb-import لصف واحد من الصفحة الرئيسية (slug الفئة).
+  /// الدالة تتحقق من أنك مسؤول، ومفتاح TMDB محفوظ على الخادم ولا يصل للتطبيق.
+  Future<Map<String, dynamic>> importTmdb(String category) async {
+    final res = await _db.functions
+        .invoke('tmdb-import', body: {'category': category})
+        .timeout(const Duration(minutes: 4));
+    return jMap(res.data) ?? <String, dynamic>{};
+  }
+
   // ------------------------------------------------------------------ رفع الصور
   /// يرفع صورة إلى حاوية عامة ويعيد رابطها العام.
   Future<String> uploadImage({
