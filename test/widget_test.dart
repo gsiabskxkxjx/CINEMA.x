@@ -373,4 +373,32 @@ void main() {
       expect(await user.history(), isEmpty);
     });
   });
+
+  group('normalizeSourceUrl (روابط Dropbox)', () {
+    test('يحوّل dl=0 أو غيابه إلى dl=1 ويحفظ rlkey وترتيب المعاملات', () {
+      expect(normalizeSourceUrl('https://www.dropbox.com/s/abc/film.mp4?dl=0'), 'https://www.dropbox.com/s/abc/film.mp4?dl=1');
+      expect(normalizeSourceUrl('https://www.dropbox.com/s/abc/film.mp4'), 'https://www.dropbox.com/s/abc/film.mp4?dl=1');
+      expect(
+        normalizeSourceUrl('https://www.dropbox.com/scl/fi/abc123/film.mp4?rlkey=k1&dl=0'),
+        'https://www.dropbox.com/scl/fi/abc123/film.mp4?rlkey=k1&dl=1',
+      );
+      expect(normalizeSourceUrl('https://www.dropbox.com/scl/fi/abc/f.mp4?rlkey=k&raw=1'), 'https://www.dropbox.com/scl/fi/abc/f.mp4?rlkey=k&dl=1');
+    });
+
+    test('يقصّ المسافات ويرفع http إلى https', () {
+      expect(normalizeSourceUrl('  http://www.dropbox.com/s/a/f.mp4?dl=0 '), 'https://www.dropbox.com/s/a/f.mp4?dl=1');
+    });
+
+    test('لا يلمس روابط المجلدات ولا غير Dropbox ولا النصوص غير الروابط', () {
+      const folder1 = 'https://www.dropbox.com/sh/abc/xyz?dl=0';
+      const folder2 = 'https://www.dropbox.com/scl/fo/abc/def?rlkey=k&dl=0';
+      const other = 'https://example.com/a.mp4?dl=0';
+      const direct = 'https://dl.dropboxusercontent.com/s/abc/film.mp4';
+      expect(normalizeSourceUrl(folder1), folder1);
+      expect(normalizeSourceUrl(folder2), folder2);
+      expect(normalizeSourceUrl(other), other);
+      expect(normalizeSourceUrl(direct), direct);
+      expect(normalizeSourceUrl('abc'), 'abc');
+    });
+  });
 }

@@ -164,7 +164,7 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
 
     final values = <String, dynamic>{
       'label': label.text.trim(),
-      'url': url.text.trim(),
+      'url': normalizeSourceUrl(url.text),
       'type': type,
       'quality_height': toInt(height.text),
       'sort_order': toInt(order.text) ?? 0,

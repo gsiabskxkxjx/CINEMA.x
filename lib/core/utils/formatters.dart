@@ -66,6 +66,24 @@ String guessSourceType(String url) {
 /// يخمّن صيغة الترجمة من الرابط: vtt / srt
 String guessSubtitleFormat(String url) => urlExtension(url) == 'vtt' ? 'vtt' : 'srt';
 
+/// يحوّل رابط مشاركة Dropbox لملف إلى رابط تنزيل مباشر (dl=1) قابل للتشغيل في المشغّل.
+/// رابط المشاركة العادي (dl=0) يفتح صفحة HTML فلا يشتغل كفيديو. الروابط الأخرى
+/// (وروابط مجلدات Dropbox) تبقى كما هي.
+String normalizeSourceUrl(String input) {
+  final raw = input.trim();
+  final u = Uri.tryParse(raw);
+  if (u == null || (u.scheme != 'http' && u.scheme != 'https') || u.host.isEmpty) return raw;
+  final host = u.host.toLowerCase();
+  if (host != 'dropbox.com' && !host.endsWith('.dropbox.com')) return raw;
+  // روابط المجلدات: /sh/… و /scl/fo/… (تنزيلها يعطي ملف zip لا فيديو)
+  final segs = u.pathSegments;
+  if (segs.isNotEmpty && segs.first == 'sh') return raw;
+  if (segs.length > 1 && segs.first == 'scl' && segs[1] == 'fo') return raw;
+  final qp = Map<String, String>.from(u.queryParameters)..remove('raw');
+  qp['dl'] = '1';
+  return u.replace(scheme: 'https', queryParameters: qp).toString();
+}
+
 /// هل الرابط http/https صالح؟
 bool isValidHttpUrl(String? url) {
   if (url == null) return false;
