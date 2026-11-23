@@ -209,9 +209,44 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
 
   static String _mb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(1);
 
-  /// يختار فيديو من معرض الهاتف، يتحقق من حجمه، يرفعه إلى حاوية videos ثم ينشئ مصدراً يشير إليه.
+  /// حدّ الحجم للرفع عبر دالة الخادم (طلب PUT واحد؛ الحد الفعلي عند R2/B2 قرابة 4.99 GiB).
+  static const _hostMaxMb = 4700;
+
+  static String _hostName(BuildContext context, String id) {
+    switch (id) {
+      case 'supabase':
+        return 'Supabase Storage';
+      case 'r2':
+        return 'Cloudflare R2';
+      case 'b2':
+        return 'Backblaze B2';
+      case 's3':
+        return context.tr('admin_host_s3');
+      default:
+        return id;
+    }
+  }
+
+  /// يختار فيديو من معرض الهاتف، يتحقق من حجمه، يرفعه إلى الاستضافة المختارة ثم ينشئ مصدراً يشير إليه.
   Future<void> _uploadFromGallery() async {
     final repo = ref.read(adminRepoProvider);
+
+    // الاستضافة: Supabase دائماً + ما ضُبط في دالة الخادم من R2 / B2 / S3.
+    final hosts = await repo.uploadHosts();
+    if (!mounted) return;
+    var host = 'supabase';
+    if (hosts.length > 1) {
+      final choice = await showChoiceSheet<String>(
+        context,
+        title: context.tr('admin_choose_host'),
+        options: [
+          for (final h in hosts)
+            ChoiceOption(h, _hostName(context, h), subtitle: context.tr('admin_host_${h}_sub')),
+        ],
+      );
+      if (choice == null || !mounted) return;
+      host = choice;
+    }
 
     XFile? picked;
     try {
@@ -231,20 +266,24 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
       return;
     }
 
-    // الحدّ الفعلي يفرضه الخادم؛ هذه القيمة لفحص مبكر فقط (app_settings.max_upload_mb).
-    var maxMb = 50;
-    try {
-      final settings = await ref.read(publicSettingsProvider.future);
-      final v = jInt(settings['max_upload_mb']);
-      if (v != null && v > 0) maxMb = v;
-    } catch (_) {}
+    // الحدّ الفعلي يفرضه الخادم؛ هذه القيمة لفحص مبكر فقط.
+    // Supabase: app_settings.max_upload_mb (الافتراضي 50). غيره: حدّ الطلب الواحد.
+    var maxMb = _hostMaxMb;
+    if (host == 'supabase') {
+      maxMb = 50;
+      try {
+        final settings = await ref.read(publicSettingsProvider.future);
+        final v = jInt(settings['max_upload_mb']);
+        if (v != null && v > 0) maxMb = v;
+      } catch (_) {}
+    }
     if (!mounted) return;
     if (size > maxMb * 1024 * 1024) {
       showAppSnack(context, context.trf('admin_upload_too_big', {'size': _mb(size), 'max': maxMb}), error: true);
       return;
     }
 
-    final details = await _askUploadDetails(sizeMb: _mb(size));
+    final details = await _askUploadDetails(sizeMb: _mb(size), host: host, big: size > 500 * 1024 * 1024);
     if (details == null || !mounted) return;
 
     final cancel = VideoUploadCancel();
@@ -289,6 +328,7 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
     try {
       url = await repo.uploadVideo(
         file: file,
+        host: host,
         cancel: cancel,
         onProgress: (sent, total) => progress.value = [sent, total],
       );
@@ -333,7 +373,7 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
   }
 
   /// يسأل عن اسم الجودة قبل الرفع. يعيد {'label': String, 'height': int?} أو null عند الإلغاء.
-  Future<Map<String, dynamic>?> _askUploadDetails({required String sizeMb}) async {
+  Future<Map<String, dynamic>?> _askUploadDetails({required String sizeMb, required String host, required bool big}) async {
     final label = TextEditingController(text: 'Auto');
     final height = TextEditingController();
     final key = GlobalKey<FormState>();
@@ -342,7 +382,7 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.card,
         scrollable: true,
-        title: Text(ctx.tr('admin_source_from_gallery')),
+        title: Text('${ctx.tr('admin_source_from_gallery')} · ${_hostName(ctx, host)}'),
         content: Form(
           key: key,
           child: Column(
@@ -350,6 +390,10 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(ctx.trf('admin_upload_selected', {'size': sizeMb}), style: const TextStyle(color: AppColors.textDim, fontSize: 12.5)),
+              if (big) ...[
+                const SizedBox(height: 8),
+                Text(ctx.tr('admin_upload_big_hint'), style: const TextStyle(color: AppColors.gold, fontSize: 12.5, height: 1.5)),
+              ],
               const SizedBox(height: 12),
               AppTextField(
                 controller: label,
@@ -392,14 +436,14 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
     final ok = await confirmDialog(
       context,
       title: context.tr('delete'),
-      message: context.tr(uploaded ? 'admin_delete_uploaded_confirm' : 'admin_delete_source_confirm'),
+      message: context.tr(uploaded ? 'admin_delete_uploaded_confirm' : 'admin_delete_source_confirm_ext'),
       confirmLabel: context.tr('delete'),
       danger: true,
     );
     if (!ok || !mounted) return;
     final done = await runAdminAction(
       context,
-      () => ref.read(adminRepoProvider).deleteSource(row['id'].toString(), url: uploaded ? url : null),
+      () => ref.read(adminRepoProvider).deleteSource(row['id'].toString(), url: url.startsWith('https://') ? url : null),
       success: context.tr('deleted'),
     );
     if (done) ref.invalidate(_adminSourcesProvider(_key));

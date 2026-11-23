@@ -427,11 +427,32 @@ class AdminRepository {
     }
   }
 
-  /// يرفع ملف فيديو من الجهاز إلى حاوية videos (للمسؤول فقط عبر RLS) ويعيد رابطه العام.
+  /// الاستضافات المتاحة للرفع: «supabase» دائماً، ثم ما اكتملت أسراره في دالة الخادم video-upload-url
+  /// (r2 / b2 / s3). إن لم تُنشر الدالة أو فشل الاتصال نرجع إلى Supabase فقط.
+  Future<List<String>> uploadHosts() async {
+    final hosts = <String>['supabase'];
+    try {
+      final res = await _db.functions
+          .invoke('video-upload-url', body: {'action': 'providers'})
+          .timeout(const Duration(seconds: 15));
+      final list = jMap(res.data)?['providers'];
+      if (list is List) {
+        for (final h in list) {
+          final id = h.toString();
+          if (id != 'supabase' && !hosts.contains(id)) hosts.add(id);
+        }
+      }
+    } catch (_) {}
+    return hosts;
+  }
+
+  /// يرفع ملف فيديو من الجهاز ويعيد رابطه العام.
+  /// [host] = supabase (حاوية videos، حدّها 50 MB في الخطة المجانية) أو r2 / b2 / s3 (طلب PUT
+  /// برابط موقّع تصدره دالة الخادم؛ مفاتيح الاستضافة لا تصل التطبيق).
   /// الرفع بالبثّ (Stream) فلا يُحمَّل الملف كله في الذاكرة، ويُبلَّغ التقدّم عبر [onProgress].
-  /// ⚠️ حدّ الحجم يفرضه الخادم (الخطة المجانية 50 MB للملف).
   Future<String> uploadVideo({
     required File file,
+    required String host,
     required void Function(int sent, int total) onProgress,
     required VideoUploadCancel cancel,
   }) async {
@@ -443,23 +464,55 @@ class AdminRepository {
 
     final token = _db.auth.currentSession?.accessToken;
     if (token == null) throw const AppException('err_not_authenticated');
-
     final total = await file.length();
-    final rnd = Random.secure().nextInt(1 << 31).toRadixString(36);
-    final path = 'uploads/${DateTime.now().millisecondsSinceEpoch}_$rnd.$ext';
-    final uri = Uri.parse('${AppConfig.supabaseUrl}/storage/v1/object/$_videoBucket/$path');
 
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
     cancel._client = client;
     try {
       if (cancel.isCancelled) throw const VideoUploadCancelled();
-      final req = await client.postUrl(uri);
-      req.headers
-        ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
-        ..set('apikey', AppConfig.supabaseAnonKey)
-        ..set(HttpHeaders.contentTypeHeader, mime)
-        ..set('x-upsert', 'false')
-        ..set('cache-control', 'max-age=3600');
+
+      final String method;
+      final Uri uri;
+      final Map<String, String> headers;
+      final String publicUrl;
+      if (host == 'supabase') {
+        final rnd = Random.secure().nextInt(1 << 31).toRadixString(36);
+        final path = 'uploads/${DateTime.now().millisecondsSinceEpoch}_$rnd.$ext';
+        method = 'POST';
+        uri = Uri.parse('${AppConfig.supabaseUrl}/storage/v1/object/$_videoBucket/$path');
+        headers = {
+          HttpHeaders.authorizationHeader: 'Bearer $token',
+          'apikey': AppConfig.supabaseAnonKey,
+          HttpHeaders.contentTypeHeader: mime,
+          'x-upsert': 'false',
+          'cache-control': 'max-age=3600',
+        };
+        publicUrl = _db.storage.from(_videoBucket).getPublicUrl(path);
+      } else {
+        // رابط PUT مؤقت لملف واحد، توقّعه دالة الخادم بعد التحقق من أنك مسؤول.
+        final Map<String, dynamic> signed;
+        try {
+          final res = await _db.functions
+              .invoke('video-upload-url', body: {'action': 'sign', 'provider': host, 'ext': ext, 'size': total})
+              .timeout(const Duration(seconds: 30));
+          signed = jMap(res.data) ?? <String, dynamic>{};
+        } on FunctionException catch (e) {
+          if (e.status == 401 || e.status == 403) throw const AppException('err_forbidden');
+          if (e.status == 413) throw const AppException('admin_upload_host_limit');
+          throw const AppException('err_upload');
+        }
+        final up = jStr(signed['upload_url']);
+        final pub = jStr(signed['public_url']);
+        if (up == null || pub == null) throw const AppException('err_upload');
+        method = 'PUT';
+        uri = Uri.parse(up);
+        headers = {HttpHeaders.contentTypeHeader: jStr(signed['content_type']) ?? mime};
+        publicUrl = pub;
+      }
+
+      if (cancel.isCancelled) throw const VideoUploadCancelled();
+      final req = await client.openUrl(method, uri);
+      headers.forEach(req.headers.set);
       req.contentLength = total;
 
       var sent = 0;
@@ -473,17 +526,8 @@ class AdminRepository {
       final res = await req.close();
       final body = await res.transform(utf8.decoder).join();
       final code = res.statusCode;
-      if (code < 200 || code >= 300) {
-        final b = body.toLowerCase();
-        if (code == 413 || b.contains('exceeded') || b.contains('too large') || b.contains('maximum allowed size')) {
-          throw const AppException('admin_upload_server_limit');
-        }
-        if (code == 401 || code == 403 || b.contains('row-level security') || b.contains('unauthorized')) {
-          throw const AppException('err_forbidden');
-        }
-        if (b.contains('mime')) throw const AppException('admin_upload_type');
-        throw const AppException('err_upload');
-      }
+      if (code < 200 || code >= 300) throw AppException(_uploadErrorKey(host, code, body));
+      return publicUrl;
     } on VideoUploadCancelled {
       rethrow;
     } catch (_) {
@@ -494,14 +538,47 @@ class AdminRepository {
       cancel._client = null;
       client.close(force: true);
     }
-    return _db.storage.from(_videoBucket).getPublicUrl(path);
   }
 
-  /// يحذف ملفاً مرفوعاً سابقاً (إن كان الرابط يعود لحاوية videos في هذا المشروع).
+  static String _uploadErrorKey(String host, int code, String body) {
+    final b = body.toLowerCase();
+    if (code == 413 || b.contains('entitytoolarge') || b.contains('exceeded') || b.contains('too large') || b.contains('maximum allowed size')) {
+      return host == 'supabase' ? 'admin_upload_server_limit' : 'admin_upload_host_limit';
+    }
+    if (host == 'supabase') {
+      if (code == 401 || code == 403 || b.contains('row-level security') || b.contains('unauthorized')) return 'err_forbidden';
+      if (b.contains('mime')) return 'admin_upload_type';
+      return 'err_upload';
+    }
+    if (code == 403) return 'admin_upload_host_denied';
+    if (code == 404 || b.contains('nosuchbucket')) return 'admin_upload_host_bucket';
+    return 'err_upload';
+  }
+
+  /// يحذف ملفاً رفعه التطبيق سابقاً: من حاوية videos في Supabase، أو من استضافة R2/B2/S3
+  /// (الدالة تتحقق أن الرابط يخصّ حاويتك وأن الملف داخل uploads/، وإلا لا تفعل شيئاً).
   Future<void> removeVideoFile(String url) async {
     final path = videoPathFromUrl(url);
-    if (path == null) return;
-    await _db.storage.from(_videoBucket).remove([path]);
+    if (path != null) {
+      await _db.storage.from(_videoBucket).remove([path]);
+      return;
+    }
+    if (!url.startsWith('https://')) return;
+    final res = await _db.functions
+        .invoke('video-upload-url', body: {'action': 'delete', 'url': url})
+        .timeout(const Duration(seconds: 30));
+    final m = jMap(res.data) ?? <String, dynamic>{};
+    if (m['managed'] != true) return;
+    final del = jStr(m['delete_url']);
+    if (del == null) return;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
+    try {
+      final req = await client.deleteUrl(Uri.parse(del));
+      final r = await req.close();
+      await r.drain<void>();
+    } finally {
+      client.close(force: true);
+    }
   }
 
   // ------------------------------------------------------------------ رفع الصور
