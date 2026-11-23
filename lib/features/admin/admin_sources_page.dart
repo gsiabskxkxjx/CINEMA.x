@@ -1,12 +1,18 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/l10n/app_strings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/errors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/utils/ui.dart';
 import '../../core/widgets/common_widgets.dart';
 import '../../data/models/json_helpers.dart';
+import '../../providers/providers.dart';
 import 'admin_repository.dart';
 import 'admin_widgets.dart';
 
@@ -183,18 +189,217 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
     if (done) ref.invalidate(_adminSourcesProvider(_key));
   }
 
+  // ------------------------------------------------------------------ إضافة مصدر: رابط أو رفع من المعرض
+  Future<void> _addSource() async {
+    final choice = await showChoiceSheet<String>(
+      context,
+      title: context.tr('admin_add_source'),
+      options: [
+        ChoiceOption('link', context.tr('admin_source_from_link'), subtitle: context.tr('admin_source_from_link_sub')),
+        ChoiceOption('gallery', context.tr('admin_source_from_gallery'), subtitle: context.tr('admin_source_from_gallery_sub')),
+      ],
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'gallery') {
+      await _uploadFromGallery();
+    } else {
+      await _editSource();
+    }
+  }
+
+  static String _mb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(1);
+
+  /// يختار فيديو من معرض الهاتف، يتحقق من حجمه، يرفعه إلى حاوية videos ثم ينشئ مصدراً يشير إليه.
+  Future<void> _uploadFromGallery() async {
+    final repo = ref.read(adminRepoProvider);
+
+    XFile? picked;
+    try {
+      picked = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    } catch (_) {
+      if (mounted) showAppSnack(context, context.tr('err_upload'), error: true);
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    final file = File(picked.path);
+    int size;
+    try {
+      size = await file.length();
+    } catch (_) {
+      if (mounted) showAppSnack(context, context.tr('err_upload'), error: true);
+      return;
+    }
+
+    // الحدّ الفعلي يفرضه الخادم؛ هذه القيمة لفحص مبكر فقط (app_settings.max_upload_mb).
+    var maxMb = 50;
+    try {
+      final settings = await ref.read(publicSettingsProvider.future);
+      final v = jInt(settings['max_upload_mb']);
+      if (v != null && v > 0) maxMb = v;
+    } catch (_) {}
+    if (!mounted) return;
+    if (size > maxMb * 1024 * 1024) {
+      showAppSnack(context, context.trf('admin_upload_too_big', {'size': _mb(size), 'max': maxMb}), error: true);
+      return;
+    }
+
+    final details = await _askUploadDetails(sizeMb: _mb(size));
+    if (details == null || !mounted) return;
+
+    final cancel = VideoUploadCancel();
+    final progress = ValueNotifier<List<int>>([0, size]);
+    final nav = Navigator.of(context);
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: AppColors.card,
+          title: Text(ctx.tr('admin_uploading')),
+          content: ValueListenableBuilder<List<int>>(
+            valueListenable: progress,
+            builder: (ctx, v, _) {
+              final raw = v[1] == 0 ? 0.0 : v[0] / v[1];
+              final double frac = raw > 1.0 ? 1.0 : raw;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(value: frac, color: AppColors.primary, backgroundColor: AppColors.cardHigh),
+                  const SizedBox(height: 10),
+                  Text('${_mb(v[0])} / ${_mb(v[1])} MB  (${(frac * 100).round()}%)', textDirection: TextDirection.ltr),
+                  const SizedBox(height: 8),
+                  Text(ctx.tr('admin_uploading_hint'), style: const TextStyle(color: AppColors.textDim, fontSize: 12.5, height: 1.5)),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(onPressed: cancel.cancel, child: Text(ctx.tr('cancel'))),
+          ],
+        ),
+      ),
+    ));
+
+    String? url;
+    Object? error;
+    var cancelled = false;
+    try {
+      url = await repo.uploadVideo(
+        file: file,
+        cancel: cancel,
+        onProgress: (sent, total) => progress.value = [sent, total],
+      );
+    } on VideoUploadCancelled {
+      cancelled = true;
+    } catch (e) {
+      error = e;
+    }
+    if (mounted) nav.pop();
+    progress.dispose();
+    if (!mounted || cancelled) return;
+    final uploaded = url;
+    if (error != null || uploaded == null) {
+      showAppSnack(context, friendlyError(context, error ?? const AppException('err_upload')), error: true);
+      return;
+    }
+
+    final done = await runAdminAction(
+      context,
+      () => repo.saveSource(
+        movieId: widget.movieId,
+        episodeId: widget.episodeId,
+        values: {
+          'label': details['label'],
+          'url': uploaded,
+          'type': 'mp4',
+          'quality_height': details['height'],
+          'sort_order': 0,
+          'is_active': true,
+        },
+      ),
+      success: context.tr('admin_upload_done'),
+    );
+    if (!done) {
+      // فشل إنشاء المصدر: لا نترك ملفاً يتيماً يستهلك المساحة.
+      try {
+        await repo.removeVideoFile(uploaded);
+      } catch (_) {}
+      return;
+    }
+    ref.invalidate(_adminSourcesProvider(_key));
+  }
+
+  /// يسأل عن اسم الجودة قبل الرفع. يعيد {'label': String, 'height': int?} أو null عند الإلغاء.
+  Future<Map<String, dynamic>?> _askUploadDetails({required String sizeMb}) async {
+    final label = TextEditingController(text: 'Auto');
+    final height = TextEditingController();
+    final key = GlobalKey<FormState>();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        scrollable: true,
+        title: Text(ctx.tr('admin_source_from_gallery')),
+        content: Form(
+          key: key,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(ctx.trf('admin_upload_selected', {'size': sizeMb}), style: const TextStyle(color: AppColors.textDim, fontSize: 12.5)),
+              const SizedBox(height: 12),
+              AppTextField(
+                controller: label,
+                label: '${ctx.tr('admin_source_label')} *',
+                hint: '1080p / 720p / Auto',
+                textDirection: TextDirection.ltr,
+                validator: (v) => (v ?? '').trim().isEmpty ? ctx.tr('v_required') : null,
+              ),
+              const SizedBox(height: 10),
+              AppTextField(
+                controller: height,
+                label: ctx.tr('admin_quality_height'),
+                hint: '1080',
+                keyboardType: TextInputType.number,
+                validator: optionalInt(ctx, min: 100, max: 4320),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(ctx.tr('cancel'))),
+          FilledButton(
+            onPressed: () {
+              if (key.currentState!.validate()) Navigator.pop(ctx, true);
+            },
+            child: Text(ctx.tr('admin_upload_start')),
+          ),
+        ],
+      ),
+    );
+    final out = <String, dynamic>{'label': label.text.trim(), 'height': toInt(height.text)};
+    label.dispose();
+    height.dispose();
+    return ok == true ? out : null;
+  }
+
   Future<void> _deleteSource(Map<String, dynamic> row) async {
+    final url = jStr(row['url']) ?? '';
+    final uploaded = AdminRepository.videoPathFromUrl(url) != null;
     final ok = await confirmDialog(
       context,
       title: context.tr('delete'),
-      message: context.tr('admin_delete_source_confirm'),
+      message: context.tr(uploaded ? 'admin_delete_uploaded_confirm' : 'admin_delete_source_confirm'),
       confirmLabel: context.tr('delete'),
       danger: true,
     );
     if (!ok || !mounted) return;
     final done = await runAdminAction(
       context,
-      () => ref.read(adminRepoProvider).deleteSource(row['id'].toString()),
+      () => ref.read(adminRepoProvider).deleteSource(row['id'].toString(), url: uploaded ? url : null),
       success: context.tr('deleted'),
     );
     if (done) ref.invalidate(_adminSourcesProvider(_key));
@@ -355,7 +560,7 @@ class _AdminSourcesPageState extends ConsumerState<AdminSourcesPage> with Single
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
-        onPressed: () => onSourcesTab ? _editSource() : _editSubtitle(),
+        onPressed: () => onSourcesTab ? _addSource() : _editSubtitle(),
         icon: const Icon(Icons.add_rounded),
         label: Text(context.tr(onSourcesTab ? 'admin_add_source' : 'admin_add_subtitle')),
       ),

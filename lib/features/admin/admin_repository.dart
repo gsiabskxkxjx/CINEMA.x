@@ -1,9 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/config/app_config.dart';
+import '../../core/utils/errors.dart';
 import '../../data/models/json_helpers.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/repositories.dart';
@@ -247,8 +251,16 @@ class AdminRepository {
     }
   }
 
-  Future<void> deleteSource(String id) async {
+  /// يحذف المصدر. إن كان ملفاً مرفوعاً في حاوية videos يُحذف الملف أيضاً (محاولة بلا إيقاف عند الفشل).
+  Future<void> deleteSource(String id, {String? url}) async {
     await _db.from('video_sources').delete().eq('id', id);
+    if (url != null) {
+      try {
+        await removeVideoFile(url);
+      } catch (_) {
+        // الصف حُذف؛ بقاء الملف لا يكسر شيئاً، ويمكن حذفه يدوياً من Storage.
+      }
+    }
   }
 
   Future<List<Map<String, dynamic>>> subtitles({String? movieId, String? episodeId}) async {
@@ -392,6 +404,106 @@ class AdminRepository {
     return jMap(res.data) ?? <String, dynamic>{};
   }
 
+  // ------------------------------------------------------------------ رفع الفيديو
+  static const _videoBucket = 'videos';
+  static const _videoMime = {
+    'mp4': 'video/mp4',
+    'm4v': 'video/mp4',
+    'webm': 'video/webm',
+    'mov': 'video/quicktime',
+    'mkv': 'video/x-matroska',
+  };
+
+  /// مسار الملف داخل حاوية videos إن كان الرابط رابط ملف مرفوع من هذا المشروع، وإلا null.
+  static String? videoPathFromUrl(String url) {
+    if (AppConfig.supabaseUrl.isEmpty) return null;
+    final prefix = '${AppConfig.supabaseUrl}/storage/v1/object/public/$_videoBucket/';
+    if (!url.startsWith(prefix)) return null;
+    try {
+      final path = Uri.decodeComponent(url.substring(prefix.length).split('?').first);
+      return path.isEmpty || path.contains('..') ? null : path;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// يرفع ملف فيديو من الجهاز إلى حاوية videos (للمسؤول فقط عبر RLS) ويعيد رابطه العام.
+  /// الرفع بالبثّ (Stream) فلا يُحمَّل الملف كله في الذاكرة، ويُبلَّغ التقدّم عبر [onProgress].
+  /// ⚠️ حدّ الحجم يفرضه الخادم (الخطة المجانية 50 MB للملف).
+  Future<String> uploadVideo({
+    required File file,
+    required void Function(int sent, int total) onProgress,
+    required VideoUploadCancel cancel,
+  }) async {
+    final name = file.path.split(Platform.pathSeparator).last;
+    final dot = name.lastIndexOf('.');
+    final ext = dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
+    final mime = _videoMime[ext];
+    if (mime == null) throw const AppException('admin_upload_type');
+
+    final token = _db.auth.currentSession?.accessToken;
+    if (token == null) throw const AppException('err_not_authenticated');
+
+    final total = await file.length();
+    final rnd = Random.secure().nextInt(1 << 31).toRadixString(36);
+    final path = 'uploads/${DateTime.now().millisecondsSinceEpoch}_$rnd.$ext';
+    final uri = Uri.parse('${AppConfig.supabaseUrl}/storage/v1/object/$_videoBucket/$path');
+
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
+    cancel._client = client;
+    try {
+      if (cancel.isCancelled) throw const VideoUploadCancelled();
+      final req = await client.postUrl(uri);
+      req.headers
+        ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
+        ..set('apikey', AppConfig.supabaseAnonKey)
+        ..set(HttpHeaders.contentTypeHeader, mime)
+        ..set('x-upsert', 'false')
+        ..set('cache-control', 'max-age=3600');
+      req.contentLength = total;
+
+      var sent = 0;
+      onProgress(0, total);
+      await req.addStream(file.openRead().map((chunk) {
+        if (cancel.isCancelled) throw const VideoUploadCancelled();
+        sent += chunk.length;
+        onProgress(sent, total);
+        return chunk;
+      }));
+      final res = await req.close();
+      final body = await res.transform(utf8.decoder).join();
+      final code = res.statusCode;
+      if (code < 200 || code >= 300) {
+        final b = body.toLowerCase();
+        if (code == 413 || b.contains('exceeded') || b.contains('too large') || b.contains('maximum allowed size')) {
+          throw const AppException('admin_upload_server_limit');
+        }
+        if (code == 401 || code == 403 || b.contains('row-level security') || b.contains('unauthorized')) {
+          throw const AppException('err_forbidden');
+        }
+        if (b.contains('mime')) throw const AppException('admin_upload_type');
+        throw const AppException('err_upload');
+      }
+    } on VideoUploadCancelled {
+      rethrow;
+    } catch (_) {
+      // إلغاء المستخدم يغلق الاتصال قسراً فيظهر كخطأ شبكة؛ نحوّله إلى إلغاء.
+      if (cancel.isCancelled) throw const VideoUploadCancelled();
+      rethrow;
+    } finally {
+      cancel._client = null;
+      client.close(force: true);
+    }
+    return _db.storage.from(_videoBucket).getPublicUrl(path);
+  }
+
+  /// يحذف ملفاً مرفوعاً سابقاً (إن كان الرابط يعود لحاوية videos في هذا المشروع).
+  Future<void> removeVideoFile(String url) async {
+    final path = videoPathFromUrl(url);
+    if (path == null) return;
+    await _db.storage.from(_videoBucket).remove([path]);
+  }
+
   // ------------------------------------------------------------------ رفع الصور
   /// يرفع صورة إلى حاوية عامة ويعيد رابطها العام.
   Future<String> uploadImage({
@@ -410,6 +522,24 @@ class AdminRepository {
           fileOptions: FileOptions(contentType: mimeForExtension(safeExt), upsert: false),
         );
     return _db.storage.from(bucket).getPublicUrl(path);
+  }
+}
+
+/// يُلقى عند إلغاء رفع الفيديو من قِبل المستخدم.
+class VideoUploadCancelled implements Exception {
+  const VideoUploadCancelled();
+}
+
+/// مقبض لإلغاء رفع جارٍ: يغلق الاتصال فوراً.
+class VideoUploadCancel {
+  bool _cancelled = false;
+  HttpClient? _client;
+
+  bool get isCancelled => _cancelled;
+
+  void cancel() {
+    _cancelled = true;
+    _client?.close(force: true);
   }
 }
 
