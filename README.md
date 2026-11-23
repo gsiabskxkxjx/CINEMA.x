@@ -52,7 +52,6 @@ flutter run
 1. أنشئ مشروعاً في Supabase.
 2. من **SQL Editor** شغّل الملف `supabase/cinema_x_full.sql` دفعة واحدة. (هو دمج الملفات `01_schema` … `05_seed` ثم `07_tmdb` بالترتيب؛ يمكنك تشغيلها منفصلة بدلاً منه.)
 3. اختياري للتجربة فقط: شغّل `supabase/06_demo_content.sql` لإضافة محتوى تجريبي. **لا تشغّله في الإنتاج.**
-   وللتجربة بمحتوى قابل للتشغيل فعلاً: `supabase/08_public_domain_films.sql` يضيف 28 فيلماً قديماً من أرشيف الإنترنت (ملكية عامة حسب مصدرها؛ اقرأ التحفظات في رأس الملف قبل أي نشر عام).
 4. **Authentication → Providers → Email:** اجعل الحد الأدنى لكلمة المرور **8** (الافتراضي 6، والتطبيق يطلب 8). قرّر تفعيل/تعطيل «Confirm email»؛ التطبيق يدعم الحالتين.
 5. **Authentication → URL Configuration → Redirect URLs:** أضف
    `io.cinemax.app://login-callback`
@@ -207,7 +206,7 @@ lib/
     auth, account
     player/                    المشغّل (المنطق البحت منفصل عن media_kit ليسهل اختباره)
     admin/                     لوحة الإدارة
-supabase/                      01..08 + الملف الكامل + functions/tmdb-import + tests/
+supabase/                      01..07 + الملف الكامل + functions/tmdb-import + tests/
 tool/                          patch_android.dart، check_keys.py
 android_templates/             قوالب توقيع الإصدار
 ```
